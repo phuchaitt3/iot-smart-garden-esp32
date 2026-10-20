@@ -92,6 +92,12 @@ void publishSensorData(float humid, float rain, float light, bool ultra) {
 
 bool isPumping = false;
 
+// Stepper Motor State Variables
+long stepsRemaining = 0;              // Tracks how many pin toggles are left
+unsigned long lastStepMicros = 0;     // Tracks the last time the pin was toggled
+bool stepPinState = LOW;              // Current state of the step pin
+const unsigned long stepInterval = 500; // 500 microseconds between toggles
+
 void callback(char* topic, byte* message, unsigned int length) {
   String strMsg;
   for(int i=0; i<length; i++) {
@@ -122,34 +128,16 @@ void callback(char* topic, byte* message, unsigned int length) {
   }
 
   else if (strcmp(topic, "21C2_N14/servo_pub") == 0) {
-    // How many rounds the step motor spins
     const int rounds = 80;
+    long totalToggles = 200 * rounds * 2; // 2 toggles (HIGH then LOW) per step
 
-    // Close lid
     if (strMsg == "true") {
-      // Set direction: Counter-clockwise
-      digitalWrite(dirPin, HIGH);
-
-      // 1.8-degree step motor: 200 = 360 degrees
-      for(int x = 0; x < 200*rounds; x++) {
-        // HIGH to LOW = 1 step
-        digitalWrite(stepPin,HIGH); 
-        delayMicroseconds(500); 
-        digitalWrite(stepPin,LOW); 
-        delayMicroseconds(500); 
-      }
+      digitalWrite(dirPin, HIGH); // Counter-clockwise
+      stepsRemaining = totalToggles; 
     }
-    // Open lid
     else if (strMsg == "false") {
-      // Set direction: Clockwise
-      digitalWrite(dirPin, LOW);
-
-      for(int x = 0; x < 200*rounds; x++) {
-        digitalWrite(stepPin,HIGH);
-        delayMicroseconds(500);
-        digitalWrite(stepPin,LOW);
-        delayMicroseconds(500);
-      }
+      digitalWrite(dirPin, LOW); // Clockwise
+      stepsRemaining = totalToggles;
     }
     else {
       Serial.println("Error at servo");
@@ -278,6 +266,17 @@ void loop() {
   mqttClient.loop();
 
   unsigned long currentTime = millis();
+  unsigned long currentMicros = micros();
+
+  // --- NON-BLOCKING STEP MOTOR ROUTINE ---
+  if (stepsRemaining > 0) {
+    if (currentMicros - lastStepMicros >= stepInterval) {
+      lastStepMicros = currentMicros;
+      stepPinState = !stepPinState;       // Toggle the state (HIGH/LOW)
+      digitalWrite(stepPin, stepPinState);
+      stepsRemaining--;                   // Count down the toggles
+    }
+  }
 
   // Check if it's time to read the sensor data
   if (currentTime - lastReadTime >= readInterval) {
